@@ -223,8 +223,6 @@
   .controls {
     padding: 10px;
     background-color: rgba(255, 255, 255, 0.9);
-    border-radius: 8px;
-    margin: 10px;
     display: flex;
     gap: 10px;
     align-items: center;
@@ -265,21 +263,6 @@
     height: 0;
     min-height: 0;
     position: relative;
-  }
-
-  /* Стили для OpenLayers */
-  :deep(.ol-viewport) {
-    width: 100%;
-    height: 100%;
-  }
-
-  /* Убираем стандартные контролы OpenLayers если нужно */
-  :deep(.ol-zoom) {
-    top: 80px;
-  }
-
-  :deep(.ol-attribution) {
-    display: none;
   }
 
   @media (max-width: 768px) {

@@ -1,0 +1,27 @@
+/** скрываем инфу из футера карты,
+  убираем стандартные контролы OpenLayers
+**/
+.ol-attribution,
+.ol-compass,
+.cesium-credit-logoContainer,
+.cesium-credit-lightbox,
+.cesium-credit-wrapper {
+  display: none !important;
+}
+
+.ol-control {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  display: flex;
+  gap: 4px;
+}
+
+.ol-zoom-in,
+.ol-zoom-out {
+  padding: 4px;
+  background-color: rgba(0, 122, 204);
+  color: #fff;
+  border-radius: 4px;
+  border: 1px solid #007acc;
+}
