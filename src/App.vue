@@ -32,6 +32,14 @@
         Добавить точку на уровне моря
       </button>
 
+      <button
+        v-if="is3D"
+        @click="toggleKeyboardControls"
+        :class="{ active: keyboardEnabled }"
+      >
+        {{ keyboardEnabled ? 'Отключить' : 'Включить' }} управление WASD
+      </button>
+
       <div class="info">Режим: {{ is3D ? '3D (Cesium)' : '2D (OpenLayers)' }}</div>
 
       <div
@@ -39,6 +47,20 @@
         class="point-info"
       >
         Точка: {{ pointInfo }}
+      </div>
+
+      <div
+        v-if="keyboardEnabled && is3D"
+        class="keyboard-info"
+      >
+        🎮 WASD/←↑→↓: движение | Q/E: вверх/вниз | Shift: ускорение
+      </div>
+
+      <div
+        v-if="is3D"
+        class="camera-info"
+      >
+        📷 Камера: мин. высота 10м
       </div>
     </div>
 
@@ -74,6 +96,13 @@
   const is3D = ref(false);
   const showLine = ref(false);
   let heightLinePolyline: PolylineCollection | null = null;
+
+  // Переменные для управления клавиатурой
+  const keyboardEnabled = ref(false);
+  let keyboardListeners: { [key: string]: boolean } = {};
+  let keyboardHandlers: Record<string, (event: KeyboardEvent) => void> | null;
+  let animationFrameId: number | null = null;
+  const moveSpeed = ref(200); // Скорость движения в метрах
 
   const pointInfo = computed<string>(() => {
     return `${randomPoint.value?.longitude.toFixed(4)} °,  ${randomPoint.value?.latitude.toFixed(4)}°
@@ -340,6 +369,161 @@
     console.log('Добавлена контрольная точка на уровне моря для сравнения');
   };
 
+  // Функции управления клавиатурой
+  const toggleKeyboardControls = () => {
+    keyboardEnabled.value = !keyboardEnabled.value;
+
+    if (keyboardEnabled.value) {
+      setupKeyboardListeners();
+      startKeyboardLoop();
+      console.log('Управление клавиатурой включено');
+    } else {
+      removeKeyboardListeners();
+      stopKeyboardLoop();
+      console.log('Управление клавиатурой отключено');
+    }
+  };
+
+  const setupKeyboardListeners = () => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const key = event.code.toLowerCase();
+      keyboardListeners[key] = true;
+
+      // Предотвращаем стандартное поведение для стрелок
+      if (['arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(key)) {
+        event.preventDefault();
+      }
+    };
+
+    const handleKeyUp = (event: KeyboardEvent) => {
+      const key = event.code.toLowerCase();
+      keyboardListeners[key] = false;
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+
+    // Сохраняем ссылки на функции для последующего удаления
+    keyboardHandlers = { handleKeyDown, handleKeyUp };
+  };
+
+  const removeKeyboardListeners = () => {
+    if (keyboardHandlers) {
+      const { handleKeyDown, handleKeyUp } = keyboardHandlers;
+
+      if (handleKeyDown) window.removeEventListener('keydown', handleKeyDown);
+      if (handleKeyUp) window.removeEventListener('keyup', handleKeyUp);
+      keyboardHandlers = null;
+    }
+    keyboardListeners = {};
+  };
+
+  const startKeyboardLoop = () => {
+    const updateCamera = () => {
+      if (!keyboardEnabled.value || !is3D.value || !map3d) {
+        return;
+      }
+
+      const scene = map3d.getCesiumScene();
+      const camera = scene.camera;
+
+      // Проверяем, нажат ли Shift для ускорения
+      const isShiftPressed = keyboardListeners['shiftleft'] || keyboardListeners['shiftright'];
+      const currentMoveSpeed = isShiftPressed ? moveSpeed.value * 3 : moveSpeed.value;
+
+      // Функция для безопасного движения с проверкой высоты
+      const safeMove = (moveFunction: () => void) => {
+        // Сохраняем текущую позицию
+        const originalPosition = camera.position.clone();
+
+        // Выполняем движение
+        moveFunction();
+
+        // Проверяем новую высоту
+        const newHeight = scene.globe.ellipsoid.cartesianToCartographic(camera.position).height;
+
+        // Если высота меньше минимальной, возвращаем камеру назад
+        if (newHeight < 15) {
+          camera.position = originalPosition;
+
+          // Поднимаем камеру на безопасную высоту
+          const cartographic = scene.globe.ellipsoid.cartesianToCartographic(camera.position);
+          cartographic.height = Math.max(cartographic.height, 20);
+          camera.position = scene.globe.ellipsoid.cartographicToCartesian(cartographic);
+        }
+      };
+
+      // Движение вперёд/назад с проверкой
+      if (keyboardListeners['keyw'] || keyboardListeners['arrowup']) {
+        safeMove(() => camera.moveForward(currentMoveSpeed));
+      }
+      if (keyboardListeners['keys'] || keyboardListeners['arrowdown']) {
+        safeMove(() => camera.moveBackward(currentMoveSpeed));
+      }
+
+      // Движение влево/вправо с проверкой
+      if (keyboardListeners['keya'] || keyboardListeners['arrowleft']) {
+        safeMove(() => camera.moveLeft(currentMoveSpeed));
+      }
+      if (keyboardListeners['keyd'] || keyboardListeners['arrowright']) {
+        safeMove(() => camera.moveRight(currentMoveSpeed));
+      }
+      // Движение вверх/вниз с проверкой высоты
+      if (keyboardListeners['keyq']) {
+        camera.moveUp(currentMoveSpeed);
+      }
+      if (keyboardListeners['keye']) {
+        // Проверяем, что камера не опустится ниже минимальной высоты
+        const currentHeight = scene.globe.ellipsoid.cartesianToCartographic(camera.position).height;
+        if (currentHeight > 15) {
+          // Оставляем минимум 15 метров
+          camera.moveDown(currentMoveSpeed);
+        }
+      }
+
+      // Поворот камеры (мышка уже обрабатывается Cesium по умолчанию)
+      // Можно добавить клавиши для поворота, но пока оставим мышь
+
+      animationFrameId = requestAnimationFrame(updateCamera);
+    };
+
+    updateCamera();
+  };
+
+  const stopKeyboardLoop = () => {
+    if (animationFrameId) {
+      cancelAnimationFrame(animationFrameId);
+      animationFrameId = null;
+    }
+  };
+
+  // Настройка управления камерой Cesium
+  const setupCesiumCameraControls = () => {
+    if (!map3d) return;
+
+    const scene = map3d.getCesiumScene();
+
+    // Настройка контроллера камеры
+    const cameraController = scene.screenSpaceCameraController;
+
+    // Настройка минимальной высоты камеры (над землёй)
+    cameraController.minimumZoomDistance = 10; // 10 метров над поверхностью
+
+    // Настройка максимальной высоты (опционально)
+    cameraController.maximumZoomDistance = 50000000; // 50,000 км
+
+    // Отключаем инверсию через настройку комбинаций клавиш мыши
+    // По умолчанию Cesium использует стандартное управление без инверсии
+
+    // Настройка чувствительности и других параметров
+    // Понижаем инерцию для более точного управления
+    cameraController.inertiaSpin = 0.05; // Меньше инерции при вращении
+    cameraController.inertiaTranslate = 0.05; // Меньше инерции при панорамировании
+    cameraController.inertiaZoom = 0.05; // Меньше инерции при масштабировании
+
+    console.log('Настройки камеры Cesium применены: мин. высота: 10м, снижена инерция');
+  };
+
   onMounted(() => {
     if (mapContainer.value) {
       try {
@@ -367,6 +551,9 @@
         // Создаем OL-Cesium интеграцию
         map3d = new OLCesium({ map: map2d });
 
+        // Настраиваем управление камерой Cesium
+        setupCesiumCameraControls();
+
         // Генерируем случайную точку
         generateRandomPoint();
         createPointFeature();
@@ -378,6 +565,12 @@
 
   // Очищаем ресурсы при размонтировании
   onUnmounted(() => {
+    // Отключаем управление клавиатурой
+    if (keyboardEnabled.value) {
+      removeKeyboardListeners();
+      stopKeyboardLoop();
+    }
+
     if (map3d) {
       map3d.setEnabled(false);
     }
@@ -510,6 +703,14 @@
     background-color: #005a9e;
   }
 
+  .controls button.active {
+    background-color: #28a745;
+  }
+
+  .controls button.active:hover {
+    background-color: #218838;
+  }
+
   .info {
     margin-left: auto;
     font-weight: bold;
@@ -528,6 +729,28 @@
     border-radius: 4px;
     border: 1px solid #ffc107;
     white-space: nowrap;
+  }
+
+  .keyboard-info {
+    font-size: 12px;
+    color: #333;
+    padding: 6px 10px;
+    background-color: rgba(40, 167, 69, 0.1);
+    border-radius: 4px;
+    border: 1px solid #28a745;
+    white-space: nowrap;
+    font-family: 'Courier New', monospace;
+  }
+
+  .camera-info {
+    font-size: 11px;
+    color: #333;
+    padding: 4px 8px;
+    background-color: rgba(108, 117, 125, 0.1);
+    border-radius: 4px;
+    border: 1px solid #6c757d;
+    white-space: nowrap;
+    font-family: 'Courier New', monospace;
   }
 
   .map-container {
